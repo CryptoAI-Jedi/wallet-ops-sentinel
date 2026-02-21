@@ -11,42 +11,49 @@ APIs used (free tier):
   - Blockstream: https://blockstream.info/api/
 
 Usage:
-  python wallet_sentinel.py
+    cp config.yaml.example config.yaml   # fill in your values
+    python wallet_sentinel.py
 """
 
 import requests
 import json
 import time
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("[FATAL] PyYAML not installed. Run: pip install pyyaml")
+    sys.exit(1)
+
 
 # ─────────────────────────────────────────────
-# CONFIG — edit this section
+# CONFIG LOADER
 # ─────────────────────────────────────────────
 
-ETHERSCAN_API_KEY = "YOUR_ETHERSCAN_API_KEY"
+CONFIG_FILE = "config.yaml"
 
-WATCHLIST = {
-    "btc": [
-        "bc1qexampleaddress1",
-        "bc1qexampleaddress2",
-    ],
-    "eth": [
-        "0xYourEthAddressHere",
-    ],
-}
 
-# Alert thresholds
-BTC_ALERT_THRESHOLD_SATS = 50_000_000   # 0.5 BTC
-ETH_ALERT_THRESHOLD_WEI  = 500_000_000_000_000_000  # 0.5 ETH
+def load_config() -> dict:
+    config_path = Path(CONFIG_FILE)
+    if not config_path.exists():
+        print(f"[FATAL] {CONFIG_FILE} not found.")
+        print(f"        Run: cp config.yaml.example config.yaml")
+        sys.exit(1)
 
-# Known mixer / high-risk contract addresses (add more as needed)
-FLAGGED_CONTRACTS = {
-    "0xd90e2f925da726b50c4ed8d0fb90ad053324f31b",  # Tornado Cash Router
-    "0x722122df12d4e14e13ac3b6895a86e84145b6967",  # Tornado Cash Proxy
-}
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
 
-ALERT_LOG = "alerts.json"
-POLL_INTERVAL_SECONDS = 300  # 5 minutes
+    # Validate required fields
+    required = ["api_keys", "watchlist", "thresholds", "flagged_contracts", "polling", "logging"]
+    missing = [key for key in required if key not in config]
+    if missing:
+        print(f"[FATAL] config.yaml missing required keys: {', '.join(missing)}")
+        sys.exit(1)
+
+    return config
 
 
 # ─────────────────────────────────────────────
@@ -57,16 +64,16 @@ def now_utc():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def write_alert(alert: dict):
+def write_alert(alert: dict, alert_log: str):
     try:
-        with open(ALERT_LOG, "r") as f:
+        with open(alert_log, "r") as f:
             log = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         log = []
 
     log.append(alert)
 
-    with open(ALERT_LOG, "w") as f:
+    with open(alert_log, "w") as f:
         json.dump(log, f, indent=2)
 
     print(f"[ALERT] {alert['severity']} | {alert['message']}")
@@ -76,14 +83,15 @@ def write_alert(alert: dict):
 # BTC MONITORING (Blockstream API)
 # ─────────────────────────────────────────────
 
-def check_btc_address(address: str):
+def check_btc_address(address: str, label: str, threshold: int, alert_log: str):
     url = f"https://blockstream.info/api/address/{address}/txs"
+
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         txs = resp.json()
     except requests.RequestException as e:
-        print(f"[WARN] BTC fetch failed for {address}: {e}")
+        print(f"[WARN] BTC fetch failed for {label} ({address}): {e}")
         return
 
     if not txs:
@@ -92,77 +100,81 @@ def check_btc_address(address: str):
     latest_tx = txs[0]
     tx_id = latest_tx.get("txid", "unknown")
 
-    # Sum outflows from this address
     total_out = sum(
         vin.get("prevout", {}).get("value", 0)
         for vin in latest_tx.get("vin", [])
         if vin.get("prevout", {}).get("scriptpubkey_address") == address
     )
 
-    if total_out >= BTC_ALERT_THRESHOLD_SATS:
+    if total_out >= threshold:
         write_alert({
             "timestamp": now_utc(),
             "chain": "BTC",
             "address": address,
+            "label": label,
             "tx_id": tx_id,
             "severity": "HIGH",
-            "message": f"Large BTC outflow detected: {total_out / 1e8:.8f} BTC",
+            "message": f"Large BTC outflow from {label}: {total_out / 1e8:.8f} BTC",
             "value_sats": total_out,
-        })
+        }, alert_log)
 
 
 # ─────────────────────────────────────────────
 # ETH MONITORING (Etherscan API)
 # ─────────────────────────────────────────────
 
-def check_eth_address(address: str):
+def check_eth_address(address: str, label: str, threshold: int,
+                      flagged: set, api_key: str, alert_log: str):
     url = (
         f"https://api.etherscan.io/api"
         f"?module=account&action=txlist"
         f"&address={address}"
         f"&startblock=0&endblock=99999999"
-        f"&sort=desc&apikey={ETHERSCAN_API_KEY}"
+        f"&sort=desc&apikey={api_key}"
     )
+
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as e:
-        print(f"[WARN] ETH fetch failed for {address}: {e}")
+        print(f"[WARN] ETH fetch failed for {label} ({address}): {e}")
         return
 
     if data.get("status") != "1" or not data.get("result"):
         return
 
     latest_tx = data["result"][0]
-    tx_hash   = latest_tx.get("hash", "unknown")
+    tx_hash = latest_tx.get("hash", "unknown")
     value_wei = int(latest_tx.get("value", 0))
-    to_addr   = latest_tx.get("to", "").lower()
+    to_addr = latest_tx.get("to", "").lower()
     from_addr = latest_tx.get("from", "").lower()
 
     # Large outflow check
-    if from_addr == address.lower() and value_wei >= ETH_ALERT_THRESHOLD_WEI:
+    if from_addr == address.lower() and value_wei >= threshold:
         write_alert({
             "timestamp": now_utc(),
             "chain": "ETH",
             "address": address,
+            "label": label,
             "tx_hash": tx_hash,
             "severity": "HIGH",
-            "message": f"Large ETH outflow: {value_wei / 1e18:.6f} ETH to {to_addr}",
+            "message": f"Large ETH outflow from {label}: {value_wei / 1e18:.6f} ETH to {to_addr}",
             "value_wei": value_wei,
-        })
+        }, alert_log)
 
     # Mixer / flagged contract interaction check
-    if to_addr in FLAGGED_CONTRACTS:
+    if to_addr in flagged:
         write_alert({
             "timestamp": now_utc(),
             "chain": "ETH",
             "address": address,
+            "label": label,
             "tx_hash": tx_hash,
             "severity": "CRITICAL",
             "message": f"Interaction with flagged contract: {to_addr}",
             "flagged_contract": to_addr,
-        })
+        }, alert_log)
 
 
 # ─────────────────────────────────────────────
@@ -170,21 +182,40 @@ def check_eth_address(address: str):
 # ─────────────────────────────────────────────
 
 def run():
+    config = load_config()
+
+    api_key = config["api_keys"].get("etherscan", "")
+    btc_wallets = config["watchlist"].get("btc", [])
+    eth_wallets = config["watchlist"].get("eth", [])
+    btc_threshold = config["thresholds"].get("btc_outflow_sats", 50000000)
+    eth_threshold = config["thresholds"].get("eth_outflow_wei", 500000000000000000)
+    flagged = {entry["address"].lower() for entry in config.get("flagged_contracts", [])}
+    interval = config["polling"].get("interval_seconds", 300)
+    alert_log = config["logging"].get("alert_log_file", "alerts.json")
+
     print(f"[INFO] Wallet Sentinel started at {now_utc()}")
-    print(f"[INFO] Monitoring {len(WATCHLIST['btc'])} BTC | {len(WATCHLIST['eth'])} ETH addresses")
-    print(f"[INFO] Poll interval: {POLL_INTERVAL_SECONDS}s | Alert log: {ALERT_LOG}\n")
+    print(f"[INFO] Config loaded from {CONFIG_FILE}")
+    print(f"[INFO] Monitoring {len(btc_wallets)} BTC | {len(eth_wallets)} ETH addresses")
+    print(f"[INFO] Flagged contracts: {len(flagged)}")
+    print(f"[INFO] Poll interval: {interval}s | Alert log: {alert_log}\n")
+
+    if not api_key or api_key == "YOUR_ETHERSCAN_API_KEY":
+        print("[WARN] Etherscan API key not set — ETH monitoring will fail.")
+        print("[WARN] Add your key to config.yaml → api_keys → etherscan\n")
 
     while True:
         print(f"[{now_utc()}] Running checks...")
 
-        for addr in WATCHLIST["btc"]:
-            check_btc_address(addr)
+        for wallet in btc_wallets:
+            check_btc_address(wallet["address"], wallet.get("label", "unlabeled"),
+                              btc_threshold, alert_log)
 
-        for addr in WATCHLIST["eth"]:
-            check_eth_address(addr)
+        for wallet in eth_wallets:
+            check_eth_address(wallet["address"], wallet.get("label", "unlabeled"),
+                              eth_threshold, flagged, api_key, alert_log)
 
-        print(f"[{now_utc()}] Checks complete. Sleeping {POLL_INTERVAL_SECONDS}s...\n")
-        time.sleep(POLL_INTERVAL_SECONDS)
+        print(f"[{now_utc()}] Checks complete. Sleeping {interval}s...\n")
+        time.sleep(interval)
 
 
 if __name__ == "__main__":
