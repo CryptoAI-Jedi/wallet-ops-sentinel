@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────
+# wallet-ops-sentinel — config.yaml.example
+# ─────────────────────────────────────────────────────────────
+# Copy this file to config.yaml and fill in your values:
+#
+#   cp config.yaml.example config.yaml
+#
+# config.yaml is gitignored — your keys stay local.
+# ─────────────────────────────────────────────────────────────
+
+api_keys:
+  etherscan: "YOUR_ETHERSCAN_API_KEY"   # https://etherscan.io/myapikey
+  # blockstream requires no API key (public)
+
+
+# ─────────────────────────────────────────────────────────────
+# WATCHLIST
+# Add wallet addresses to monitor. Labels are for your
+# reference — they show up in alert logs so you know which
+# wallet triggered without memorizing addresses.
+# ─────────────────────────────────────────────────────────────
+
+watchlist:
+  btc:
+    - address: "bc1qYourBtcAddressHere"
+      label: "hot-wallet-primary"
+    - address: "bc1qAnotherBtcAddress"
+      label: "sweep-wallet"
+
+  eth:
+    - address: "0xYourEthAddressHere"
+      label: "ops-hot-wallet"
+    - address: "0xAnotherEthAddress"
+      label: "treasury-warm-wallet"
+
+
+# ─────────────────────────────────────────────────────────────
+# ALERT THRESHOLDS
+# Values are in base units:
+#   BTC = satoshis (100,000,000 sats = 1 BTC)
+#   ETH = wei (1,000,000,000,000,000,000 wei = 1 ETH)
+# ─────────────────────────────────────────────────────────────
+
+thresholds:
+  btc_outflow_sats: 50000000              # 0.5 BTC
+  eth_outflow_wei: 500000000000000000     # 0.5 ETH
+
+
+# ─────────────────────────────────────────────────────────────
+# FLAGGED CONTRACTS
+# Any address here triggers a CRITICAL alert on interaction.
+# Start with OFAC-sanctioned addresses and known mixers.
+# Add your own as needed.
+#
+# Sources:
+#   - OFAC SDN List: https://sanctionssearch.ofac.treas.gov
+#   - Etherscan labels: https://etherscan.io/labelcloud
+# ─────────────────────────────────────────────────────────────
+
+flagged_contracts:
+  - address: "0xd90e2f925da726b50c4ed8d0fb90ad053324f31b"
+    label: "Tornado Cash Router"
+    source: "OFAC SDN"
+  - address: "0x722122df12d4e14e13ac3b6895a86e84145b6967"
+    label: "Tornado Cash Proxy"
+    source: "OFAC SDN"
+  - address: "0x7f367cc41522ce07553e823bf3be79a889debe1b"
+    label: "OFAC Sanctioned Address"
+    source: "OFAC SDN"
+
+
+# ─────────────────────────────────────────────────────────────
+# POLLING & LOGGING
+# ─────────────────────────────────────────────────────────────
+
+polling:
+  interval_seconds: 300    # 5 minutes. Lower = more API calls.
+                           # Etherscan free tier: 5 calls/sec.
+
+logging:
+  alert_log_file: "alerts.json"
+  log_level: "INFO"        # DEBUG | INFO | WARN | ERROR
