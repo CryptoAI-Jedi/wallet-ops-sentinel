@@ -19,15 +19,15 @@ operations guide because tooling without process is just noise.
 
 ## Features
 
-- **Multi-chain monitoring**: BTC via Blockstream API, ETH/EVM via Etherscan API
-- **Large outflow detection**: configurable thresholds per chain
-- **Flagged contract alerts**: detects interactions with known mixers and
+- **Multi-chain monitoring:** BTC via Blockstream API, ETH/EVM via Etherscan API
+- **Large outflow detection:** configurable thresholds per chain
+- **Flagged contract alerts:** detects interactions with known mixers and
   OFAC-sanctioned addresses (Tornado Cash and others)
-- **Structured JSON alert log**: every alert timestamped and labeled by
+- **Structured JSON alert log:** every alert timestamped and labeled by
   severity (HIGH / CRITICAL)
-- **Human-readable config**: all watchlists and thresholds managed in
+- **Human-readable config:** all watchlists and thresholds managed in
   `config.yaml`, no code changes needed
-- **Ops runbooks included**: incident response SOP and multi-sig best
+- **Ops runbooks included:** incident response SOP and multi-sig best
   practices written for ops teams, not developers
 
 ---
