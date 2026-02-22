@@ -6,14 +6,14 @@
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
 A Python-based wallet monitoring tool built around exchange-grade ops
-principles — detect anomalies early, log everything, escalate fast.
+principles to detect anomalies early, log everything, and escalate fast.
 
 Monitors BTC and EVM wallet addresses using free public APIs. Flags large
 outflows, interactions with sanctioned or mixer contracts, and writes
 structured alerts to a JSON log for ops review.
 
 Paired with a professional incident response runbook and multi-sig
-operations guide — because tooling without process is just noise.
+operations guide because tooling without process is just noise.
 
 ---
 
